@@ -47,7 +47,7 @@
     ]
   },
   "dependencies": {
-    "@tursodatabase/database-common": "^0.4.0-pre.18"
+    "@tursodatabase/database-common": "file:../common"
   },
   "imports": {
     "#index": "./index.js"

@@ -155,6 +155,59 @@ fn create_error(status: napi::Status, message: &str) -> napi::Error {
     Error::new(status, message)
 }
 
+/// Parse cipher and hexkey from a file URI (e.g., "file:path?cipher=aegis256&hexkey=...")
+fn parse_encryption_opts(path: &str) -> Option<(String, turso_core::EncryptionOpts)> {
+    // Only parse if it looks like a URI with query params
+    if !path.starts_with("file:") || !path.contains('?') {
+        return None;
+    }
+
+    let query_start = path.find('?')?;
+    let query = &path[query_start + 1..];
+
+    // Remove fragment if present
+    let query = query.split('#').next().unwrap_or(query);
+
+    let mut cipher = None;
+    let mut hexkey = None;
+
+    for param in query.split('&') {
+        if let Some((key, value)) = param.split_once('=') {
+            match key {
+                "cipher" => cipher = Some(value.to_string()),
+                "hexkey" => hexkey = Some(value.to_string()),
+                _ => {}
+            }
+        }
+    }
+
+    // Extract the actual file path (before query params)
+    let path_without_query = if path.starts_with("file:") {
+        let after_scheme = &path[5..];
+        // Handle file:// authority prefix
+        let path_part = if after_scheme.starts_with("//") {
+            let after_slashes = &after_scheme[2..];
+            // Skip authority (localhost or empty) and get path
+            if let Some(slash_pos) = after_slashes.find('/') {
+                &after_slashes[slash_pos..]
+            } else {
+                after_slashes
+            }
+        } else {
+            after_scheme
+        };
+        // Remove query string
+        path_part.split('?').next().unwrap_or(path_part).to_string()
+    } else {
+        path.split('?').next().unwrap_or(path).to_string()
+    };
+
+    match (cipher, hexkey) {
+        (Some(c), Some(h)) => Some((path_without_query, turso_core::EncryptionOpts { cipher: c, hexkey: h })),
+        _ => None,
+    }
+}
+
 fn connect_sync(db: &DatabaseInner) -> napi::Result<()> {
     if db.connect.get().is_some() {
         return Ok(());
@@ -174,15 +227,29 @@ fn connect_sync(db: &DatabaseInner) -> napi::Result<()> {
             busy_timeout = Some(std::time::Duration::from_millis(timeout as u64));
         }
     }
+
+    // Parse encryption options from URI if present
+    let (actual_path, encryption_opts) = match parse_encryption_opts(&db.path) {
+        Some((path, enc_opts)) => (path, Some(enc_opts)),
+        None => (db.path.clone(), None),
+    };
+
+    // Enable encryption feature if encryption options are provided
+    let db_opts = if encryption_opts.is_some() {
+        turso_core::DatabaseOpts::new().with_mvcc(false).with_encryption(true)
+    } else {
+        turso_core::DatabaseOpts::new().with_mvcc(false)
+    };
+
     let io = &db.io;
     let db_core = turso_core::Database::open_file_with_flags(
         io.clone(),
-        &db.path,
+        &actual_path,
         flags,
-        turso_core::DatabaseOpts::new(),
-        None,
+        db_opts,
+        encryption_opts,
     )
-    .map_err(|e| to_generic_error(&format!("failed to open database {}", db.path), e))?;
+    .map_err(|e| to_generic_error(&format!("failed to open file {}", db.path), e))?;
 
     let conn = db_core
         .connect()

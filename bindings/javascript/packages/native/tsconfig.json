@@ -6,16 +6,22 @@
     "module": "nodenext",
     "target": "esnext",
     "outDir": "dist/",
+    "rootDir": ".",
+    "baseUrl": ".",
     "lib": [
       "es2020"
     ],
     "paths": {
       "#index": [
         "./index.js"
+      ],
+      "@tursodatabase/database-common": [
+        "../common/dist/index.js"
       ]
     }
   },
   "include": [
-    "*"
+    "promise.ts",
+    "compat.ts"
   ]
 }
